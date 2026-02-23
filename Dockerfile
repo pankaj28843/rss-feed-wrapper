@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+LABEL org.opencontainers.image.title="rss-feed-wrapper" \
+      org.opencontainers.image.description="Generic full-text RSS wrapper using article-extractor" \
+      org.opencontainers.image.source="https://github.com/pankaj28843/rss-feed-wrapper"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

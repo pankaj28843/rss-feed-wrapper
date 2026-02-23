@@ -1,50 +1,117 @@
 # rss-feed-wrapper
 
-Standalone RSS feed wrapper service that:
+[![CI](https://github.com/pankaj28843/rss-feed-wrapper/actions/workflows/ci.yml/badge.svg)](https://github.com/pankaj28843/rss-feed-wrapper/actions/workflows/ci.yml)
+[![Docker Publish](https://github.com/pankaj28843/rss-feed-wrapper/actions/workflows/docker.yml/badge.svg)](https://github.com/pankaj28843/rss-feed-wrapper/actions/workflows/docker.yml)
 
-- Accepts `GET /rss?url=<source_feed_url>`
-- Fetches the source RSS feed (generic)
-- Extracts article URL per entry:
-: HNRSS `Article URL` pattern when present, otherwise standard item `link`
-- Uses `article-extractor` to fetch full article content
-- Caches results in local SQLite
-- Keeps at most **100 cached items per source feed**
-- Returns a new RSS feed with `title`, `pubDate`, source URL in `description`, and full HTML in `content:encoded`
+Minimal, generic RSS-to-fulltext wrapper.
+
+Input: any RSS feed URL via `GET /rss?url=<feed_url>`.
+Output: a new RSS feed where each item includes:
+- extracted full article HTML (`content:encoded`)
+- extracted title and publication date (when available)
+- canonical source URL in `description`
+
+`hnrss.org` is supported as one source pattern, but the wrapper is feed-agnostic.
+
+## Why
+
+- Keep your reader/Kindle pipeline on RSS
+- Get full content instead of short snippets
+- Cache extracted articles locally to reduce repeat fetches
+
+## Features
+
+- Generic source feed support (`link`-based and HNRSS `Article URL` pattern)
+- `article-extractor` integration (no fork, no changes needed)
+- SQLite cache with per-source retention cap (`max 100` by default)
+- Adaptive high parallelism:
+  - global semaphore
+  - per-host dynamic concurrency (fast hosts scale up, failing hosts back off)
+- Proxy support:
+  - single default pool
+  - multiple named pools (`?proxy_pool=<name>`)
+  - automatic retry across all proxies in selected pool
 
 ## Quickstart
 
 ```bash
+git clone git@github.com:pankaj28843/rss-feed-wrapper.git
+cd rss-feed-wrapper
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 uvicorn rss_feed_wrapper.main:app --host 0.0.0.0 --port 8080
 ```
 
-Try:
+Test:
 
 ```bash
-curl 'http://localhost:8080/rss?url=https%3A%2F%2Fhnrss.org%2Fnewest%3Fpoints%3D100%26comments%3D25%26count%3D20'
+curl 'http://localhost:8080/health'
+curl 'http://localhost:8080/rss?url=https%3A%2F%2Fhnrss.org%2Fnewest%3Fpoints%3D100%26comments%3D25%26count%3D20' -o wrapped.xml
 ```
 
-## Config
+## Docker
 
-- `RSS_WRAPPER_DB_PATH` (default: `./data/rss_wrapper.db`)
-- `RSS_WRAPPER_CACHE_MAX_ITEMS` (default: `100`)
-- `RSS_WRAPPER_HTTP_TIMEOUT` (default: `20`)
-- `RSS_WRAPPER_PREFER_PLAYWRIGHT` (default: `true`)
-- `RSS_WRAPPER_MAX_PARALLELISM` (default: `32`)
-- `RSS_WRAPPER_PER_HOST_INITIAL_PARALLELISM` (default: `2`)
-- `RSS_WRAPPER_PER_HOST_MIN_PARALLELISM` (default: `1`)
-- `RSS_WRAPPER_PER_HOST_MAX_PARALLELISM` (default: `8`)
-- `RSS_WRAPPER_PROXY_POOL` (comma-separated proxy URLs)
-- `RSS_WRAPPER_PROXY_POOLS` (multiple named pools)
-: format `poolA=http://host:port,http://host2:port;poolB=http://host3:port`
+```bash
+docker run --rm -p 8080:8080 \
+  -e RSS_WRAPPER_PROXY_POOL='http://proxy1.local:8080,http://proxy2.local:8080' \
+  ghcr.io/pankaj28843/rss-feed-wrapper:latest
+```
 
-Runtime selection:
-- `GET /rss?...&proxy_pool=poolA` to force a named proxy pool for that request.
-- If omitted, service uses `default` pool (from `RSS_WRAPPER_PROXY_POOL` if set, otherwise first named pool).
+## API
 
-## Dev checks
+### `GET /health`
+Returns service status.
+
+### `GET /rss`
+Query params:
+- `url` (required): URL-encoded source RSS/Atom feed URL (`http`/`https`)
+- `max_items` (optional): `1..200`, default `100`
+- `proxy_pool` (optional): name of pool from `RSS_WRAPPER_PROXY_POOLS`
+
+Example:
+
+```bash
+curl 'http://localhost:8080/rss?url=https%3A%2F%2Fhnrss.org%2Fnewest%3Fcount%3D30&max_items=30&proxy_pool=default'
+```
+
+## Configuration
+
+All config is env-based with prefix `RSS_WRAPPER_`.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `DB_PATH` | `./data/rss_wrapper.db` | SQLite path |
+| `CACHE_MAX_ITEMS` | `100` | Per-source item cap |
+| `HTTP_TIMEOUT` | `20` | Source feed fetch timeout (seconds) |
+| `PREFER_PLAYWRIGHT` | `true` | Forwarded to `article-extractor` |
+| `MAX_PARALLELISM` | `32` | Global extraction concurrency |
+| `PER_HOST_INITIAL_PARALLELISM` | `2` | Initial per-host concurrency |
+| `PER_HOST_MIN_PARALLELISM` | `1` | Minimum per-host concurrency |
+| `PER_HOST_MAX_PARALLELISM` | `8` | Maximum per-host concurrency |
+| `PROXY_POOL` | `` | Comma-separated proxies for `default` pool |
+| `PROXY_POOLS` | `` | Multiple pools, format: `poolA=http://a:1,http://b:2;poolB=http://c:3` |
+
+## Proxy pools
+
+Single pool:
+
+```bash
+export RSS_WRAPPER_PROXY_POOL='http://proxy1.local:8080,http://proxy2.local:8080'
+```
+
+Multiple pools:
+
+```bash
+export RSS_WRAPPER_PROXY_POOLS='default=http://proxy1.local:8080,http://proxy2.local:8080;fallback=http://proxy3.local:8080,http://proxy4.local:8080'
+```
+
+Behavior:
+- if no pool is requested, `default` is used when present
+- each article extraction tries direct (`None`) first, then all proxies in round-robin order
+- on failures it keeps trying remaining proxies
+
+## Development
 
 ```bash
 ruff format .
@@ -52,9 +119,12 @@ ruff check .
 pytest -q
 ```
 
-## Docker
+## Security notes
 
-```bash
-docker build -t ghcr.io/<user>/rss-feed-wrapper:latest .
-docker run --rm -p 8080:8080 ghcr.io/<user>/rss-feed-wrapper:latest
-```
+- Do not commit proxy addresses/tokens in public repos.
+- Keep runtime secrets in deployment env files or secret managers.
+- Restrict input URLs at your edge if running this as a public service.
+
+## License
+
+MIT
