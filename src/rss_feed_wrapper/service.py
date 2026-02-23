@@ -21,7 +21,7 @@ class RSSWrapperService:
     def __init__(self, db: CacheDB, settings: Settings):
         self.db = db
         self.settings = settings
-        self._proxy_cursor = 0
+        self._proxy_cursors: dict[str, int] = {}
         self._proxy_lock = asyncio.Lock()
 
     async def _fetch_source_feed(self, source_url: str) -> str:
@@ -32,17 +32,26 @@ class RSSWrapperService:
             response.raise_for_status()
             return response.text
 
-    async def _next_proxy_order(self) -> list[str | None]:
-        proxies = self.settings.proxies()
+    async def _next_proxy_order(self, pool_name: str | None) -> list[str | None]:
+        pools = self.settings.proxy_pools_map()
+        if pool_name is None:
+            pool_key = "default" if "default" in pools else next(iter(pools), "")
+        else:
+            pool_key = pool_name
+
+        proxies = pools.get(pool_key, [])
         if not proxies:
             return [None]
         async with self._proxy_lock:
-            offset = self._proxy_cursor % len(proxies)
-            self._proxy_cursor += 1
+            cursor = self._proxy_cursors.get(pool_key, 0)
+            offset = cursor % len(proxies)
+            self._proxy_cursors[pool_key] = cursor + 1
         ordered = proxies[offset:] + proxies[:offset]
         return [None, *ordered]
 
-    async def _extract_article(self, article_url: str) -> WrappedFeedItem | None:
+    async def _extract_article(
+        self, article_url: str, pool_name: str | None
+    ) -> WrappedFeedItem | None:
         options = ExtractionOptions(
             min_word_count=80,
             min_char_threshold=500,
@@ -50,7 +59,7 @@ class RSSWrapperService:
             include_code_blocks=True,
             safe_markdown=True,
         )
-        for proxy in await self._next_proxy_order():
+        for proxy in await self._next_proxy_order(pool_name):
             network = NetworkOptions(proxy=proxy, randomize_user_agent=True)
             try:
                 result = await extract_article_from_url(
@@ -86,8 +95,16 @@ class RSSWrapperService:
             raise ValueError("url host must be hnrss.org")
         return source_url
 
+    def validate_pool_name(self, pool_name: str | None) -> str | None:
+        if pool_name is None:
+            return None
+        known = self.settings.proxy_pools_map().keys()
+        if pool_name not in known:
+            raise ValueError(f"unknown proxy_pool '{pool_name}'")
+        return pool_name
+
     async def build_wrapped_items(
-        self, source_url: str, max_items: int
+        self, source_url: str, max_items: int, pool_name: str | None = None
     ) -> tuple[str, list[WrappedFeedItem]]:
         source_xml = await self._fetch_source_feed(source_url)
         source_title, entries = parse_hnrss(source_xml, limit=max_items)
@@ -102,7 +119,7 @@ class RSSWrapperService:
                 wrapped_items.append(cached)
                 continue
 
-            extracted = await self._extract_article(entry.article_url)
+            extracted = await self._extract_article(entry.article_url, pool_name)
             if extracted is None:
                 continue
             if entry.pub_date:

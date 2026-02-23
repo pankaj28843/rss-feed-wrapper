@@ -40,15 +40,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def wrap_rss(
         url: str = Query(..., description="Original HNRSS URL"),
         max_items: int = Query(100, ge=1, le=200),
+        proxy_pool: str | None = Query(
+            None, description="Optional proxy pool name from RSS_WRAPPER_PROXY_POOLS"
+        ),
     ) -> Response:
         try:
             source_url = service.validate_source_url(url)
+            selected_pool = service.validate_pool_name(proxy_pool)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
             source_title, items = await service.build_wrapped_items(
-                source_url, max_items
+                source_url, max_items, selected_pool
             )
         except HTTPException:
             raise

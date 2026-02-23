@@ -32,6 +32,12 @@ curl 'http://localhost:8080/rss?url=https%3A%2F%2Fhnrss.org%2Fnewest%3Fpoints%3D
 - `RSS_WRAPPER_HTTP_TIMEOUT` (default: `20`)
 - `RSS_WRAPPER_PREFER_PLAYWRIGHT` (default: `true`)
 - `RSS_WRAPPER_PROXY_POOL` (comma-separated proxy URLs)
+- `RSS_WRAPPER_PROXY_POOLS` (multiple named pools)
+: format `poolA=http://host:port,http://host2:port;poolB=http://host3:port`
+
+Runtime selection:
+- `GET /rss?...&proxy_pool=poolA` to force a named proxy pool for that request.
+- If omitted, service uses `default` pool (from `RSS_WRAPPER_PROXY_POOL` if set, otherwise first named pool).
 
 ## Dev checks
 

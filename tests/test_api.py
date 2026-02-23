@@ -12,7 +12,7 @@ def test_rss_endpoint_e2e_with_cache(tmp_path, monkeypatch) -> None:
         cache_max_items=100,
         http_timeout=5,
         prefer_playwright=False,
-        proxy_pool="http://p1:8080,http://p2:8080",
+        proxy_pools="poolA=http://p1:8080,http://p2:8080;poolB=http://p3:8080",
     )
     app = create_app(settings)
 
@@ -32,7 +32,7 @@ def test_rss_endpoint_e2e_with_cache(tmp_path, monkeypatch) -> None:
           </channel>
         </rss>"""
 
-    async def fake_extract(_self, _url: str):
+    async def fake_extract(_self, _url: str, _pool: str | None):
         calls["extract"] += 1
         return WrappedFeedItem(
             title="Extracted A",
@@ -65,3 +65,22 @@ def test_rss_endpoint_rejects_non_hnrss(tmp_path) -> None:
     with TestClient(app) as client:
         resp = client.get("/rss", params={"url": "https://example.com/rss"})
     assert resp.status_code == 400
+
+
+def test_rss_endpoint_rejects_unknown_proxy_pool(tmp_path) -> None:
+    app = create_app(
+        Settings(
+            db_path=str(tmp_path / "x.db"),
+            proxy_pools="poolA=http://p1:8080,http://p2:8080",
+        )
+    )
+    with TestClient(app) as client:
+        resp = client.get(
+            "/rss",
+            params={
+                "url": "https://hnrss.org/newest?count=1",
+                "proxy_pool": "missing-pool",
+            },
+        )
+    assert resp.status_code == 400
+    assert "unknown proxy_pool" in resp.json()["detail"]
