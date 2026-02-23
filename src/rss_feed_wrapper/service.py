@@ -13,10 +13,9 @@ from article_extractor.types import NetworkOptions
 from .config import Settings
 from .db import CacheDB
 from .models import SourceFeedEntry, WrappedFeedItem
-from .parser import parse_hnrss
+from .parser import parse_source_feed
 
 logger = logging.getLogger(__name__)
-_ALLOWED_HOSTS = {"hnrss.org", "www.hnrss.org"}
 
 
 @dataclass
@@ -135,8 +134,8 @@ class RSSWrapperService:
         parsed = urlparse(source_url)
         if parsed.scheme not in {"http", "https"}:
             raise ValueError("url must use http or https")
-        if parsed.netloc.lower() not in _ALLOWED_HOSTS:
-            raise ValueError("url host must be hnrss.org")
+        if not parsed.netloc:
+            raise ValueError("url host is required")
         return source_url
 
     def validate_pool_name(self, pool_name: str | None) -> str | None:
@@ -151,7 +150,7 @@ class RSSWrapperService:
         self, source_url: str, max_items: int, pool_name: str | None = None
     ) -> tuple[str, list[WrappedFeedItem]]:
         source_xml = await self._fetch_source_feed(source_url)
-        source_title, entries = parse_hnrss(source_xml, limit=max_items)
+        source_title, entries = parse_source_feed(source_xml, limit=max_items)
         feed_id = await self.db.upsert_feed(source_url, source_title)
 
         wrapped_items: list[WrappedFeedItem] = []

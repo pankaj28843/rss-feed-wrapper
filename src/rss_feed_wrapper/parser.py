@@ -20,13 +20,13 @@ def _extract_article_url(item: ET.Element) -> str | None:
     return None
 
 
-def parse_hnrss(xml_text: str, limit: int) -> tuple[str, list[SourceFeedEntry]]:
+def parse_source_feed(xml_text: str, limit: int) -> tuple[str, list[SourceFeedEntry]]:
     root = ET.fromstring(xml_text)  # noqa: S314 - trusted upstream controlled by caller
     channel = root.find("channel")
     if channel is None:
         raise ValueError("source feed missing channel")
 
-    source_title = (channel.findtext("title") or "HNRSS").strip()
+    source_title = (channel.findtext("title") or "Source Feed").strip()
     entries: list[SourceFeedEntry] = []
     for item in channel.findall("item")[:limit]:
         article_url = _extract_article_url(item)

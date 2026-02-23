@@ -60,10 +60,10 @@ def test_rss_endpoint_e2e_with_cache(tmp_path, monkeypatch) -> None:
     assert calls["extract"] == 1
 
 
-def test_rss_endpoint_rejects_non_hnrss(tmp_path) -> None:
+def test_rss_endpoint_rejects_invalid_scheme(tmp_path) -> None:
     app = create_app(Settings(db_path=str(tmp_path / "x.db")))
     with TestClient(app) as client:
-        resp = client.get("/rss", params={"url": "https://example.com/rss"})
+        resp = client.get("/rss", params={"url": "ftp://example.com/rss"})
     assert resp.status_code == 400
 
 

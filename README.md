@@ -2,9 +2,10 @@
 
 Standalone RSS feed wrapper service that:
 
-- Accepts `GET /rss?url=<hnrss_url>`
-- Fetches the source HNRSS feed
-- Extracts each `Article URL`
+- Accepts `GET /rss?url=<source_feed_url>`
+- Fetches the source RSS feed (generic)
+- Extracts article URL per entry:
+: HNRSS `Article URL` pattern when present, otherwise standard item `link`
 - Uses `article-extractor` to fetch full article content
 - Caches results in local SQLite
 - Keeps at most **100 cached items per source feed**
