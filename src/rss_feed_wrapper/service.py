@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
+from time import perf_counter
 from urllib.parse import urlparse
 
 import httpx
@@ -10,11 +12,53 @@ from article_extractor.types import NetworkOptions
 
 from .config import Settings
 from .db import CacheDB
-from .models import WrappedFeedItem
+from .models import SourceFeedEntry, WrappedFeedItem
 from .parser import parse_hnrss
 
 logger = logging.getLogger(__name__)
 _ALLOWED_HOSTS = {"hnrss.org", "www.hnrss.org"}
+
+
+@dataclass
+class _HostState:
+    limit: int
+    in_flight: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+
+
+class _AdaptiveHostLimiter:
+    def __init__(self, *, initial: int, minimum: int, maximum: int):
+        self._initial = initial
+        self._min = minimum
+        self._max = maximum
+        self._states: dict[str, _HostState] = {}
+        self._lock = asyncio.Lock()
+        self._cond = asyncio.Condition(self._lock)
+
+    async def acquire(self, host: str) -> None:
+        async with self._cond:
+            state = self._states.setdefault(host, _HostState(limit=self._initial))
+            while state.in_flight >= state.limit:
+                await self._cond.wait()
+            state.in_flight += 1
+
+    async def release(self, host: str, *, success: bool, latency_s: float) -> None:
+        async with self._cond:
+            state = self._states.setdefault(host, _HostState(limit=self._initial))
+            state.in_flight = max(0, state.in_flight - 1)
+
+            if success:
+                state.success_count += 1
+                # Fast healthy host: ramp up gradually.
+                if latency_s < 8.0 and state.success_count % 3 == 0:
+                    state.limit = min(self._max, state.limit + 1)
+            else:
+                state.failure_count += 1
+                # On failures, quickly back off.
+                state.limit = max(self._min, state.limit // 2 or self._min)
+
+            self._cond.notify_all()
 
 
 class RSSWrapperService:
@@ -111,6 +155,7 @@ class RSSWrapperService:
         feed_id = await self.db.upsert_feed(source_url, source_title)
 
         wrapped_items: list[WrappedFeedItem] = []
+        uncached_entries = []
         for entry in entries:
             cached = await self.db.get_cached_item(feed_id, entry.article_url)
             if cached is not None:
@@ -118,8 +163,12 @@ class RSSWrapperService:
                     cached.pub_date = entry.pub_date
                 wrapped_items.append(cached)
                 continue
+            uncached_entries.append(entry)
 
-            extracted = await self._extract_article(entry.article_url, pool_name)
+        extracted_results = await self._extract_uncached_entries(
+            uncached_entries, pool_name
+        )
+        for entry, extracted in extracted_results:
             if extracted is None:
                 continue
             if entry.pub_date:
@@ -131,3 +180,42 @@ class RSSWrapperService:
 
         await self.db.prune_feed(feed_id, self.settings.cache_max_items)
         return source_title, wrapped_items
+
+    async def _extract_uncached_entries(
+        self, entries: list[SourceFeedEntry], pool_name: str | None
+    ) -> list[tuple[SourceFeedEntry, WrappedFeedItem | None]]:
+        if not entries:
+            return []
+
+        global_sem = asyncio.Semaphore(max(1, self.settings.max_parallelism))
+        limiter = _AdaptiveHostLimiter(
+            initial=max(1, self.settings.per_host_initial_parallelism),
+            minimum=max(1, self.settings.per_host_min_parallelism),
+            maximum=max(
+                self.settings.per_host_min_parallelism,
+                self.settings.per_host_max_parallelism,
+            ),
+        )
+
+        async def worker(entry):
+            parsed = urlparse(entry.article_url)
+            host = parsed.netloc.lower() or "unknown-host"
+            async with global_sem:
+                await limiter.acquire(host)
+                started = perf_counter()
+                success = False
+                try:
+                    extracted = await self._extract_article(
+                        entry.article_url, pool_name
+                    )
+                    success = extracted is not None
+                    return entry, extracted
+                finally:
+                    await limiter.release(
+                        host,
+                        success=success,
+                        latency_s=perf_counter() - started,
+                    )
+
+        tasks = [asyncio.create_task(worker(entry)) for entry in entries]
+        return await asyncio.gather(*tasks)

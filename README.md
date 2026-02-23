@@ -31,6 +31,10 @@ curl 'http://localhost:8080/rss?url=https%3A%2F%2Fhnrss.org%2Fnewest%3Fpoints%3D
 - `RSS_WRAPPER_CACHE_MAX_ITEMS` (default: `100`)
 - `RSS_WRAPPER_HTTP_TIMEOUT` (default: `20`)
 - `RSS_WRAPPER_PREFER_PLAYWRIGHT` (default: `true`)
+- `RSS_WRAPPER_MAX_PARALLELISM` (default: `32`)
+- `RSS_WRAPPER_PER_HOST_INITIAL_PARALLELISM` (default: `2`)
+- `RSS_WRAPPER_PER_HOST_MIN_PARALLELISM` (default: `1`)
+- `RSS_WRAPPER_PER_HOST_MAX_PARALLELISM` (default: `8`)
 - `RSS_WRAPPER_PROXY_POOL` (comma-separated proxy URLs)
 - `RSS_WRAPPER_PROXY_POOLS` (multiple named pools)
 : format `poolA=http://host:port,http://host2:port;poolB=http://host3:port`
