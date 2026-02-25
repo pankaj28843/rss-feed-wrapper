@@ -171,6 +171,12 @@ class RSSWrapperService:
                     proxy,
                     mode,
                 )
+                error_reason = (result.error or "").strip()
+                if not error_reason:
+                    if result.success:
+                        error_reason = "empty_content"
+                    else:
+                        error_reason = "empty_or_unsuccessful_result"
                 await self.db.record_extraction_attempt(
                     source_url=source_url,
                     article_url=article_url,
@@ -179,7 +185,7 @@ class RSSWrapperService:
                     mode=mode,
                     success=False,
                     latency_ms=int((perf_counter() - started) * 1000),
-                    error="empty_or_unsuccessful_result",
+                    error=error_reason,
                 )
 
         return None

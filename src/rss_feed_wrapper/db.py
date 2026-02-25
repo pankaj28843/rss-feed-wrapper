@@ -282,6 +282,19 @@ class CacheDB:
               COUNT(*) AS attempts,
               SUM(success) AS success_count,
               SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS fail_count,
+              SUM(
+                CASE
+                  WHEN success = 0 AND (
+                    LOWER(COALESCE(error, '')) LIKE '%proxy%'
+                    OR LOWER(COALESCE(error, '')) LIKE '%connect%'
+                    OR LOWER(COALESCE(error, '')) LIKE '%certificate%'
+                    OR LOWER(COALESCE(error, '')) LIKE '%ssl%'
+                    OR LOWER(COALESCE(error, '')) LIKE '%timeout%'
+                    OR LOWER(COALESCE(error, '')) LIKE '%network%'
+                  ) THEN 1
+                  ELSE 0
+                END
+              ) AS transport_fail_count,
               AVG(latency_ms) AS avg_latency_ms
             FROM extraction_attempts
             WHERE attempted_at >= datetime('now', ?)
@@ -344,14 +357,17 @@ class CacheDB:
         for row in proxy_rows:
             attempts = int(row["attempts"] or 0)
             failures = int(row["fail_count"] or 0)
-            fail_rate = (failures / attempts) if attempts else 0.0
-            if attempts >= 5 and fail_rate >= 0.2:
+            transport_failures = int(row["transport_fail_count"] or 0)
+            transport_fail_rate = (transport_failures / attempts) if attempts else 0.0
+            if attempts >= 5 and transport_failures >= 3 and transport_fail_rate >= 0.2:
                 warning_rows.append(
                     {
                         "proxy_name": row["proxy_name"],
                         "attempts": attempts,
                         "fail_count": failures,
-                        "fail_rate_pct": round(fail_rate * 100, 1),
+                        "fail_rate_pct": round((failures / attempts) * 100, 1),
+                        "transport_fail_count": transport_failures,
+                        "transport_fail_rate_pct": round(transport_fail_rate * 100, 1),
                     }
                 )
 
