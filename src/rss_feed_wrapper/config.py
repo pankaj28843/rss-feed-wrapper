@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     cache_max_items: int = 100
     http_timeout: float = 20.0
     prefer_playwright: bool = True
+    extract_http_first: bool = False
+    extract_fallback_playwright: bool = True
     max_parallelism: int = 32
     per_host_initial_parallelism: int = 2
     per_host_min_parallelism: int = 1

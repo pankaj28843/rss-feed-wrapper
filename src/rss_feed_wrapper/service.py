@@ -66,6 +66,7 @@ class RSSWrapperService:
         self.settings = settings
         self._proxy_cursors: dict[str, int] = {}
         self._proxy_lock = asyncio.Lock()
+        self._proxy_support_disabled = False
 
     async def _fetch_source_feed(self, source_url: str) -> str:
         async with httpx.AsyncClient(
@@ -76,6 +77,9 @@ class RSSWrapperService:
             return response.text
 
     async def _next_proxy_order(self, pool_name: str | None) -> list[str | None]:
+        if self._proxy_support_disabled:
+            return [None]
+
         pools = self.settings.proxy_pools_map()
         if pool_name is None:
             pool_key = "default" if "default" in pools else next(iter(pools), "")
@@ -92,6 +96,17 @@ class RSSWrapperService:
         ordered = proxies[offset:] + proxies[:offset]
         return [None, *ordered]
 
+    def _extractor_modes(self) -> list[bool]:
+        primary = (
+            False
+            if self.settings.extract_http_first
+            else self.settings.prefer_playwright
+        )
+        modes = [primary]
+        if self.settings.extract_fallback_playwright and (not primary) not in modes:
+            modes.append(not primary)
+        return modes
+
     async def _extract_article(
         self, article_url: str, pool_name: str | None
     ) -> WrappedFeedItem | None:
@@ -102,30 +117,53 @@ class RSSWrapperService:
             include_code_blocks=True,
             safe_markdown=True,
         )
+        modes = self._extractor_modes()
         for proxy in await self._next_proxy_order(pool_name):
-            network = NetworkOptions(proxy=proxy, randomize_user_agent=True)
-            try:
-                result = await extract_article_from_url(
+            for use_playwright in modes:
+                network = NetworkOptions(proxy=proxy, randomize_user_agent=True)
+                try:
+                    result = await extract_article_from_url(
+                        article_url,
+                        options=options,
+                        network=network,
+                        prefer_playwright=use_playwright,
+                    )
+                except Exception as exc:
+                    msg = str(exc)
+                    if (
+                        proxy is not None
+                        and "unexpected keyword argument 'proxies'" in msg
+                    ):
+                        self._proxy_support_disabled = True
+                        logger.error(
+                            "Detected proxy transport incompatibility in "
+                            "article-extractor/httpx. Disabling proxy attempts "
+                            "for remaining requests until restart."
+                        )
+                        break
+                    logger.warning(
+                        "Extraction error for %s via proxy=%s mode=%s: %s",
+                        article_url,
+                        proxy,
+                        "playwright" if use_playwright else "http",
+                        exc,
+                    )
+                    continue
+
+                if result.success and result.content.strip():
+                    return WrappedFeedItem(
+                        title=(result.title or article_url).strip(),
+                        source_url=article_url,
+                        pub_date=result.date_published,
+                        content_html=result.content,
+                    )
+
+                logger.info(
+                    "Extraction failed for %s via proxy=%s mode=%s",
                     article_url,
-                    options=options,
-                    network=network,
-                    prefer_playwright=self.settings.prefer_playwright,
+                    proxy,
+                    "playwright" if use_playwright else "http",
                 )
-            except Exception as exc:
-                logger.warning(
-                    "Extraction error for %s via proxy=%s: %s", article_url, proxy, exc
-                )
-                continue
-
-            if result.success and result.content.strip():
-                return WrappedFeedItem(
-                    title=(result.title or article_url).strip(),
-                    source_url=article_url,
-                    pub_date=result.date_published,
-                    content_html=result.content,
-                )
-
-            logger.info("Extraction failed for %s via proxy=%s", article_url, proxy)
 
         return None
 

@@ -85,6 +85,8 @@ All config is env-based with prefix `RSS_WRAPPER_`.
 | `CACHE_MAX_ITEMS` | `100` | Per-source item cap |
 | `HTTP_TIMEOUT` | `20` | Source feed fetch timeout (seconds) |
 | `PREFER_PLAYWRIGHT` | `true` | Forwarded to `article-extractor` |
+| `EXTRACT_HTTP_FIRST` | `false` | Try HTTP extraction before Playwright |
+| `EXTRACT_FALLBACK_PLAYWRIGHT` | `true` | Retry with opposite mode on extraction failure |
 | `MAX_PARALLELISM` | `32` | Global extraction concurrency |
 | `PER_HOST_INITIAL_PARALLELISM` | `2` | Initial per-host concurrency |
 | `PER_HOST_MIN_PARALLELISM` | `1` | Minimum per-host concurrency |
@@ -110,6 +112,7 @@ Behavior:
 - if no pool is requested, `default` is used when present
 - each article extraction tries direct (`None`) first, then all proxies in round-robin order
 - on failures it keeps trying remaining proxies
+- if proxy runtime incompatibility is detected, proxy attempts are auto-disabled until restart
 
 ## Development
 
