@@ -310,6 +310,64 @@ class CacheDB:
         )
         host_rows = [dict(row) for row in await host_cur.fetchall()]
 
+        extraction_cur = await self.conn.execute(
+            """
+            SELECT
+              COUNT(*) AS total_attempts,
+              SUM(success) AS success_count,
+              SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS fail_count,
+              AVG(latency_ms) AS avg_latency_ms
+            FROM extraction_attempts
+            WHERE attempted_at >= datetime('now', ?)
+            """,
+            (f"-{lookback_days} days",),
+        )
+        extraction_row = await extraction_cur.fetchone()
+
+        errors_cur = await self.conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(error, ''), 'unknown') AS error_text,
+              COUNT(*) AS occurrences
+            FROM extraction_attempts
+            WHERE attempted_at >= datetime('now', ?)
+              AND success = 0
+            GROUP BY COALESCE(NULLIF(error, ''), 'unknown')
+            ORDER BY occurrences DESC
+            LIMIT 12
+            """,
+            (f"-{lookback_days} days",),
+        )
+        error_rows = [dict(row) for row in await errors_cur.fetchall()]
+
+        warning_rows = []
+        for row in proxy_rows:
+            attempts = int(row["attempts"] or 0)
+            failures = int(row["fail_count"] or 0)
+            fail_rate = (failures / attempts) if attempts else 0.0
+            if attempts >= 5 and fail_rate >= 0.2:
+                warning_rows.append(
+                    {
+                        "proxy_name": row["proxy_name"],
+                        "attempts": attempts,
+                        "fail_count": failures,
+                        "fail_rate_pct": round(fail_rate * 100, 1),
+                    }
+                )
+
+        failed_feeds_cur = await self.conn.execute(
+            """
+            SELECT requested_at, source_url, error
+            FROM feed_requests
+            WHERE requested_at >= datetime('now', ?)
+              AND status != 'ok'
+            ORDER BY requested_at DESC
+            LIMIT 20
+            """,
+            (f"-{lookback_days} days",),
+        )
+        failed_feeds_rows = [dict(row) for row in await failed_feeds_cur.fetchall()]
+
         return {
             "feeds": {
                 "total": int(feed_row["total"] or 0),
@@ -317,6 +375,15 @@ class CacheDB:
                 "fail": int(feed_row["fail_count"] or 0),
                 "avg_duration_ms": int(feed_row["avg_ms"] or 0),
             },
+            "extraction": {
+                "total_attempts": int(extraction_row["total_attempts"] or 0),
+                "success": int(extraction_row["success_count"] or 0),
+                "fail": int(extraction_row["fail_count"] or 0),
+                "avg_latency_ms": int(extraction_row["avg_latency_ms"] or 0),
+            },
             "proxies": proxy_rows,
             "hosts": host_rows,
+            "top_errors": error_rows,
+            "warnings": warning_rows,
+            "recent_failed_feeds": failed_feeds_rows,
         }
