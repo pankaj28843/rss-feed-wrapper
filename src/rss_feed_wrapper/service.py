@@ -66,7 +66,6 @@ class RSSWrapperService:
         self.settings = settings
         self._proxy_cursors: dict[str, int] = {}
         self._proxy_lock = asyncio.Lock()
-        self._proxy_support_disabled = False
 
     async def _fetch_source_feed(self, source_url: str) -> str:
         async with httpx.AsyncClient(
@@ -77,9 +76,6 @@ class RSSWrapperService:
             return response.text
 
     async def _next_proxy_order(self, pool_name: str | None) -> list[str | None]:
-        if self._proxy_support_disabled:
-            return [None]
-
         pools = self.settings.proxy_pools_map()
         if pool_name is None:
             pool_key = "default" if "default" in pools else next(iter(pools), "")
@@ -108,7 +104,7 @@ class RSSWrapperService:
         return modes
 
     async def _extract_article(
-        self, article_url: str, pool_name: str | None
+        self, article_url: str, pool_name: str | None, source_url: str
     ) -> WrappedFeedItem | None:
         options = ExtractionOptions(
             min_word_count=80,
@@ -121,6 +117,9 @@ class RSSWrapperService:
         for proxy in await self._next_proxy_order(pool_name):
             for use_playwright in modes:
                 network = NetworkOptions(proxy=proxy, randomize_user_agent=True)
+                started = perf_counter()
+                mode = "playwright" if use_playwright else "http"
+                host = urlparse(article_url).netloc.lower() or "unknown-host"
                 try:
                     result = await extract_article_from_url(
                         article_url,
@@ -129,28 +128,36 @@ class RSSWrapperService:
                         prefer_playwright=use_playwright,
                     )
                 except Exception as exc:
-                    msg = str(exc)
-                    if (
-                        proxy is not None
-                        and "unexpected keyword argument 'proxies'" in msg
-                    ):
-                        self._proxy_support_disabled = True
-                        logger.error(
-                            "Detected proxy transport incompatibility in "
-                            "article-extractor/httpx. Disabling proxy attempts "
-                            "for remaining requests until restart."
-                        )
-                        break
                     logger.warning(
                         "Extraction error for %s via proxy=%s mode=%s: %s",
                         article_url,
                         proxy,
-                        "playwright" if use_playwright else "http",
+                        mode,
                         exc,
+                    )
+                    await self.db.record_extraction_attempt(
+                        source_url=source_url,
+                        article_url=article_url,
+                        host=host,
+                        proxy=proxy,
+                        mode=mode,
+                        success=False,
+                        latency_ms=int((perf_counter() - started) * 1000),
+                        error=str(exc),
                     )
                     continue
 
                 if result.success and result.content.strip():
+                    await self.db.record_extraction_attempt(
+                        source_url=source_url,
+                        article_url=article_url,
+                        host=host,
+                        proxy=proxy,
+                        mode=mode,
+                        success=True,
+                        latency_ms=int((perf_counter() - started) * 1000),
+                        error=None,
+                    )
                     return WrappedFeedItem(
                         title=(result.title or article_url).strip(),
                         source_url=article_url,
@@ -162,7 +169,17 @@ class RSSWrapperService:
                     "Extraction failed for %s via proxy=%s mode=%s",
                     article_url,
                     proxy,
-                    "playwright" if use_playwright else "http",
+                    mode,
+                )
+                await self.db.record_extraction_attempt(
+                    source_url=source_url,
+                    article_url=article_url,
+                    host=host,
+                    proxy=proxy,
+                    mode=mode,
+                    success=False,
+                    latency_ms=int((perf_counter() - started) * 1000),
+                    error="empty_or_unsuccessful_result",
                 )
 
         return None
@@ -187,39 +204,61 @@ class RSSWrapperService:
     async def build_wrapped_items(
         self, source_url: str, max_items: int, pool_name: str | None = None
     ) -> tuple[str, list[WrappedFeedItem]]:
-        source_xml = await self._fetch_source_feed(source_url)
-        source_title, entries = parse_source_feed(source_xml, limit=max_items)
-        feed_id = await self.db.upsert_feed(source_url, source_title)
+        started = perf_counter()
+        try:
+            source_xml = await self._fetch_source_feed(source_url)
+            source_title, entries = parse_source_feed(source_xml, limit=max_items)
+            feed_id = await self.db.upsert_feed(source_url, source_title)
 
-        wrapped_items: list[WrappedFeedItem] = []
-        uncached_entries = []
-        for entry in entries:
-            cached = await self.db.get_cached_item(feed_id, entry.article_url)
-            if cached is not None:
-                if entry.pub_date and not cached.pub_date:
-                    cached.pub_date = entry.pub_date
-                wrapped_items.append(cached)
-                continue
-            uncached_entries.append(entry)
+            wrapped_items: list[WrappedFeedItem] = []
+            uncached_entries = []
+            for entry in entries:
+                cached = await self.db.get_cached_item(feed_id, entry.article_url)
+                if cached is not None:
+                    if entry.pub_date and not cached.pub_date:
+                        cached.pub_date = entry.pub_date
+                    wrapped_items.append(cached)
+                    continue
+                uncached_entries.append(entry)
 
-        extracted_results = await self._extract_uncached_entries(
-            uncached_entries, pool_name
-        )
-        for entry, extracted in extracted_results:
-            if extracted is None:
-                continue
-            if entry.pub_date:
-                extracted.pub_date = entry.pub_date
-            if not extracted.title.strip():
-                extracted.title = entry.title
-            await self.db.upsert_item(feed_id, extracted)
-            wrapped_items.append(extracted)
+            extracted_results = await self._extract_uncached_entries(
+                uncached_entries, pool_name, source_url
+            )
+            for entry, extracted in extracted_results:
+                if extracted is None:
+                    continue
+                if entry.pub_date:
+                    extracted.pub_date = entry.pub_date
+                if not extracted.title.strip():
+                    extracted.title = entry.title
+                await self.db.upsert_item(feed_id, extracted)
+                wrapped_items.append(extracted)
 
-        await self.db.prune_feed(feed_id, self.settings.cache_max_items)
-        return source_title, wrapped_items
+            await self.db.prune_feed(feed_id, self.settings.cache_max_items)
+            await self.db.record_feed_request(
+                source_url=source_url,
+                proxy_pool=pool_name,
+                requested_items=max_items,
+                returned_items=len(wrapped_items),
+                duration_ms=int((perf_counter() - started) * 1000),
+                status="ok",
+                error=None,
+            )
+            return source_title, wrapped_items
+        except Exception as exc:
+            await self.db.record_feed_request(
+                source_url=source_url,
+                proxy_pool=pool_name,
+                requested_items=max_items,
+                returned_items=0,
+                duration_ms=int((perf_counter() - started) * 1000),
+                status="error",
+                error=str(exc),
+            )
+            raise
 
     async def _extract_uncached_entries(
-        self, entries: list[SourceFeedEntry], pool_name: str | None
+        self, entries: list[SourceFeedEntry], pool_name: str | None, source_url: str
     ) -> list[tuple[SourceFeedEntry, WrappedFeedItem | None]]:
         if not entries:
             return []
@@ -243,7 +282,7 @@ class RSSWrapperService:
                 success = False
                 try:
                     extracted = await self._extract_article(
-                        entry.article_url, pool_name
+                        entry.article_url, pool_name, source_url
                     )
                     success = extracted is not None
                     return entry, extracted

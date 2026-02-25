@@ -32,7 +32,7 @@ def test_rss_endpoint_e2e_with_cache(tmp_path, monkeypatch) -> None:
           </channel>
         </rss>"""
 
-    async def fake_extract(_self, _url: str, _pool: str | None):
+    async def fake_extract(_self, _url: str, _pool: str | None, _source_url: str):
         calls["extract"] += 1
         return WrappedFeedItem(
             title="Extracted A",
@@ -84,3 +84,14 @@ def test_rss_endpoint_rejects_unknown_proxy_pool(tmp_path) -> None:
         )
     assert resp.status_code == 400
     assert "unknown proxy_pool" in resp.json()["detail"]
+
+
+def test_dashboard_endpoints(tmp_path) -> None:
+    app = create_app(Settings(db_path=str(tmp_path / "x.db")))
+    with TestClient(app) as client:
+        j = client.get("/dashboard.json")
+        h = client.get("/dashboard")
+    assert j.status_code == 200
+    assert "feeds" in j.json()
+    assert h.status_code == 200
+    assert "rss-feed-wrapper dashboard" in h.text

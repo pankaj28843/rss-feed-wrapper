@@ -39,7 +39,7 @@ async def test_parallel_extraction_reaches_concurrency(tmp_path, monkeypatch) ->
     in_flight = 0
     max_in_flight = 0
 
-    async def fake_extract(_self, url: str, _pool_name: str | None):
+    async def fake_extract(_self, url: str, _pool_name: str | None, _source_url: str):
         nonlocal in_flight, max_in_flight
         async with lock:
             in_flight += 1

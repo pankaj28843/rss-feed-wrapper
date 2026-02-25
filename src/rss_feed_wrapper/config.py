@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     per_host_initial_parallelism: int = 2
     per_host_min_parallelism: int = 1
     per_host_max_parallelism: int = 8
+    log_dir: str = "./data/logs"
+    log_retention_days: int = 366
+    log_level: str = "INFO"
+    dashboard_lookback_days: int = 7
     proxy_pool: str = ""
     proxy_pools: str = ""
 

@@ -30,7 +30,9 @@ Output: a new RSS feed where each item includes:
 - Proxy support:
   - single default pool
   - multiple named pools (`?proxy_pool=<name>`)
-  - automatic retry across all proxies in selected pool
+  - automatic retry across all proxies in selected pool (always iterates full pool)
+- Persistent logs with daily rotation (1-year retention configurable)
+- Built-in dashboard endpoints (`/dashboard`, `/dashboard.json`)
 
 ## Quickstart
 
@@ -75,6 +77,12 @@ Example:
 curl 'http://localhost:8080/rss?url=https%3A%2F%2Fhnrss.org%2Fnewest%3Fcount%3D30&max_items=30&proxy_pool=default'
 ```
 
+### `GET /dashboard`
+HTML dashboard with feed request and extraction stats.
+
+### `GET /dashboard.json`
+JSON dashboard snapshot for automation.
+
 ## Configuration
 
 All config is env-based with prefix `RSS_WRAPPER_`.
@@ -91,6 +99,10 @@ All config is env-based with prefix `RSS_WRAPPER_`.
 | `PER_HOST_INITIAL_PARALLELISM` | `2` | Initial per-host concurrency |
 | `PER_HOST_MIN_PARALLELISM` | `1` | Minimum per-host concurrency |
 | `PER_HOST_MAX_PARALLELISM` | `8` | Maximum per-host concurrency |
+| `LOG_DIR` | `./data/logs` | Persistent log directory |
+| `LOG_RETENTION_DAYS` | `366` | Daily rotated log retention |
+| `LOG_LEVEL` | `INFO` | Application log level |
+| `DASHBOARD_LOOKBACK_DAYS` | `7` | Dashboard aggregation window |
 | `PROXY_POOL` | `` | Comma-separated proxies for `default` pool |
 | `PROXY_POOLS` | `` | Multiple pools, format: `poolA=http://a:1,http://b:2;poolB=http://c:3` |
 
@@ -111,8 +123,7 @@ export RSS_WRAPPER_PROXY_POOLS='default=http://proxy1.local:8080,http://proxy2.l
 Behavior:
 - if no pool is requested, `default` is used when present
 - each article extraction tries direct (`None`) first, then all proxies in round-robin order
-- on failures it keeps trying remaining proxies
-- if proxy runtime incompatibility is detected, proxy attempts are auto-disabled until restart
+- on failures it keeps trying remaining proxies (full pool iteration every request)
 
 ## Development
 
