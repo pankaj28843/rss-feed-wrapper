@@ -127,7 +127,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         health_badge_class = (
             "b-ok"
             if health_label == "healthy"
-            else "b-warn" if health_label == "degraded" else "b-bad"
+            else "b-warn"
+            if health_label == "degraded"
+            else "b-bad"
         )
         generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%SZ")
         warning_block = (
@@ -264,7 +266,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     </span>
     <span class="badge">feed success: {feed_success_rate}%</span>
     <span class="badge">extraction success: {extraction_success_rate}%</span>
-    <span class="badge {('b-bad' if degraded_proxies else 'b-ok')}">
+    <span class="badge {("b-bad" if degraded_proxies else "b-ok")}">
       degraded proxies: {degraded_proxies}
     </span>
     <span class="badge">generated: {generated_at}</span>
