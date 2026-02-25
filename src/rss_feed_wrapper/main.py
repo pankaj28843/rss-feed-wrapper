@@ -125,9 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             error_rows
             if error_rows
             else (
-                "<tr><td colspan='2'>"
-                "No extraction errors in lookback window."
-                "</td></tr>"
+                "<tr><td colspan='2'>No extraction errors in lookback window.</td></tr>"
             )
         )
 
