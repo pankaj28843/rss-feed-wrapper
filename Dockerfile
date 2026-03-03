@@ -17,8 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md /app/
 COPY src /app/src
+COPY vendor /app/vendor
 
-RUN pip install --no-cache-dir .
+RUN if ls /app/vendor/article_extractor-*.whl >/dev/null 2>&1; then \
+      pip install --no-cache-dir /app/vendor/article_extractor-*.whl; \
+    fi \
+    && pip install --no-cache-dir .
 RUN python -m playwright install --with-deps chromium
 
 RUN useradd --create-home --uid 10001 appuser \
