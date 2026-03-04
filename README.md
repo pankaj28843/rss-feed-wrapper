@@ -28,7 +28,6 @@ Output: a new RSS feed where each item includes:
   - global semaphore
   - per-host dynamic concurrency (fast hosts scale up, failing hosts back off)
 - Proxy support:
-  - single default pool
   - multiple named pools (`?proxy_pool=<name>`)
   - automatic retry across all proxies in selected pool (always iterates full pool)
 - Persistent logs with daily rotation (1-year retention configurable)
@@ -56,7 +55,7 @@ curl 'http://localhost:8080/rss?url=https%3A%2F%2Fhnrss.org%2Fnewest%3Fpoints%3D
 
 ```bash
 docker run --rm -p 8080:8080 \
-  -e RSS_WRAPPER_PROXY_POOL='http://proxy1.local:8080,http://proxy2.local:8080' \
+  -e RSS_WRAPPER_PROXY_POOLS='default=http://proxy1.local:8080,http://proxy2.local:8080' \
   ghcr.io/pankaj28843/rss-feed-wrapper:latest
 ```
 
@@ -103,18 +102,9 @@ All config is env-based with prefix `RSS_WRAPPER_`.
 | `LOG_RETENTION_DAYS` | `366` | Daily rotated log retention |
 | `LOG_LEVEL` | `INFO` | Application log level |
 | `DASHBOARD_LOOKBACK_DAYS` | `7` | Dashboard aggregation window |
-| `PROXY_POOL` | `` | Comma-separated proxies for `default` pool |
 | `PROXY_POOLS` | `` | Multiple pools, format: `poolA=http://a:1,http://b:2;poolB=http://c:3` |
 
 ## Proxy pools
-
-Single pool:
-
-```bash
-export RSS_WRAPPER_PROXY_POOL='http://proxy1.local:8080,http://proxy2.local:8080'
-```
-
-Multiple pools:
 
 ```bash
 export RSS_WRAPPER_PROXY_POOLS='default=http://proxy1.local:8080,http://proxy2.local:8080;fallback=http://proxy3.local:8080,http://proxy4.local:8080'

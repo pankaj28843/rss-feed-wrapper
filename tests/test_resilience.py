@@ -14,7 +14,7 @@ async def test_always_iterates_all_proxies_on_errors(tmp_path, monkeypatch) -> N
         db=db,
         settings=Settings(
             db_path=str(tmp_path / "resilience.db"),
-            proxy_pool="http://proxy.local:8080,http://proxy2.local:8080",
+            proxy_pools="default=http://proxy.local:8080,http://proxy2.local:8080",
             extract_fallback_playwright=False,
         ),
     )

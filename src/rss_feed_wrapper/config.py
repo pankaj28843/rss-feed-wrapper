@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     log_retention_days: int = 366
     log_level: str = "INFO"
     dashboard_lookback_days: int = 7
-    proxy_pool: str = ""
     proxy_pools: str = ""
 
     model_config = SettingsConfigDict(
@@ -25,16 +24,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    def proxies(self) -> list[str]:
-        return [x.strip() for x in self.proxy_pool.split(",") if x.strip()]
-
     def proxy_pools_map(self) -> dict[str, list[str]]:
         pools: dict[str, list[str]] = {}
-
-        # Backward-compatible single pool.
-        single_pool = self.proxies()
-        if single_pool:
-            pools["default"] = single_pool
 
         # Multiple pools format:
         # RSS_WRAPPER_PROXY_POOLS="pool1=http://a:1,http://b:2;pool2=http://c:3"
