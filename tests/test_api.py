@@ -95,3 +95,50 @@ def test_dashboard_endpoints(tmp_path) -> None:
     assert "feeds" in j.json()
     assert h.status_code == 200
     assert "rss-feed-wrapper dashboard" in h.text
+
+
+def test_rss_endpoint_skips_binary_and_oversized_entries(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "wrapper2.db"
+    settings = Settings(db_path=str(db_path))
+    app = create_app(settings)
+
+    async def fake_feed(_self, _url: str) -> str:
+        return """<?xml version='1.0'?>
+        <rss version='2.0'>
+          <channel>
+            <title>Mixed Feed</title>
+            <item><title>PDF</title><link>https://example.com/a.pdf</link></item>
+            <item><title>Big</title><link>https://example.com/big</link></item>
+            <item><title>OK</title><link>https://example.com/ok</link></item>
+          </channel>
+        </rss>"""
+
+    async def fake_extract(_self, url: str, _pool: str | None, _source_url: str):
+        if url.endswith("/big"):
+            return WrappedFeedItem(
+                title="Big",
+                source_url=url,
+                pub_date=None,
+                content_html="<p>" + ("x " * 9001) + "</p>",
+            )
+        return WrappedFeedItem(
+            title="OK",
+            source_url=url,
+            pub_date=None,
+            content_html="<article><p>Hello</p></article>",
+        )
+
+    monkeypatch.setattr(
+        "rss_feed_wrapper.service.RSSWrapperService._fetch_source_feed", fake_feed
+    )
+    monkeypatch.setattr(
+        "rss_feed_wrapper.service.RSSWrapperService._extract_article", fake_extract
+    )
+
+    with TestClient(app) as client:
+        resp = client.get("/rss", params={"url": "https://hnrss.org/newest?count=3"})
+
+    assert resp.status_code == 200
+    assert "https://example.com/a.pdf" not in resp.text
+    assert "https://example.com/big" not in resp.text
+    assert "https://example.com/ok" in resp.text

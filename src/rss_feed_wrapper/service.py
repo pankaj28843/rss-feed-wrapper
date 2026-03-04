@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from time import perf_counter
 from urllib.parse import urlparse
 
@@ -16,6 +17,72 @@ from .models import SourceFeedEntry, WrappedFeedItem
 from .parser import parse_source_feed
 
 logger = logging.getLogger(__name__)
+_BINARY_EXTENSIONS = {
+    ".7z",
+    ".avi",
+    ".bin",
+    ".bz2",
+    ".class",
+    ".csv",
+    ".doc",
+    ".docm",
+    ".docx",
+    ".dmg",
+    ".epub",
+    ".exe",
+    ".gif",
+    ".gz",
+    ".ico",
+    ".iso",
+    ".jar",
+    ".jpeg",
+    ".jpg",
+    ".mobi",
+    ".mov",
+    ".mp3",
+    ".mp4",
+    ".mpeg",
+    ".mpg",
+    ".odp",
+    ".ods",
+    ".odt",
+    ".pdf",
+    ".png",
+    ".ppt",
+    ".pptm",
+    ".pptx",
+    ".rar",
+    ".svg",
+    ".tar",
+    ".tgz",
+    ".tif",
+    ".tiff",
+    ".wav",
+    ".webm",
+    ".webp",
+    ".xls",
+    ".xlsb",
+    ".xlsm",
+    ".xlsx",
+    ".xz",
+    ".zip",
+}
+_ALLOWED_TEXT_CONTENT_TYPES = (
+    "text/html",
+    "application/xhtml+xml",
+    "text/plain",
+)
+
+
+class _InnerTextCounter(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.char_count = 0
+
+    def handle_data(self, data: str) -> None:
+        if not data:
+            return
+        self.char_count += len(data)
 
 
 @dataclass
@@ -67,6 +134,58 @@ class RSSWrapperService:
         self._proxy_cursors: dict[str, int] = {}
         self._proxy_lock = asyncio.Lock()
 
+    def _is_binary_url(self, article_url: str) -> bool:
+        path = (urlparse(article_url).path or "").lower()
+        return any(path.endswith(ext) for ext in _BINARY_EXTENSIONS)
+
+    def _count_inner_text(self, content_html: str) -> int:
+        parser = _InnerTextCounter()
+        parser.feed(content_html)
+        parser.close()
+        return parser.char_count
+
+    def _is_within_size_limits(self, content_html: str) -> tuple[bool, int]:
+        chars = self._count_inner_text(content_html)
+        ok = chars <= self.settings.max_inner_text_chars
+        return ok, chars
+
+    @staticmethod
+    def _normalize_content_type(content_type: str | None) -> str:
+        return (content_type or "").split(";", 1)[0].strip().lower()
+
+    async def _preflight_article_url(self, article_url: str) -> tuple[bool, str | None]:
+        max_bytes = max(1, self.settings.max_article_content_mb) * 1024 * 1024
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.settings.http_timeout, follow_redirects=True
+            ) as client:
+                response = await client.head(article_url)
+                status = response.status_code
+                if status >= 400 or status in {405, 501}:
+                    response = await client.get(
+                        article_url,
+                        headers={"Range": "bytes=0-0"},
+                    )
+
+                ctype = self._normalize_content_type(
+                    response.headers.get("content-type")
+                )
+                if ctype and not any(
+                    ctype.startswith(prefix) for prefix in _ALLOWED_TEXT_CONTENT_TYPES
+                ):
+                    return True, f"skipped_content_type:{ctype}"
+
+                clen_raw = (response.headers.get("content-length") or "").strip()
+                if clen_raw.isdigit() and int(clen_raw) > max_bytes:
+                    return True, (
+                        f"skipped_content_length:{clen_raw}>"
+                        f"{max_bytes}({self.settings.max_article_content_mb}MB)"
+                    )
+        except Exception as exc:
+            logger.debug("Preflight failed for %s: %s", article_url, exc)
+
+        return False, None
+
     async def _fetch_source_feed(self, source_url: str) -> str:
         async with httpx.AsyncClient(
             timeout=self.settings.http_timeout, follow_redirects=True
@@ -106,6 +225,38 @@ class RSSWrapperService:
     async def _extract_article(
         self, article_url: str, pool_name: str | None, source_url: str
     ) -> WrappedFeedItem | None:
+        host = urlparse(article_url).netloc.lower() or "unknown-host"
+        if self._is_binary_url(article_url):
+            logger.info("Skipping binary URL by extension: %s", article_url)
+            await self.db.record_extraction_attempt(
+                source_url=source_url,
+                article_url=article_url,
+                host=host,
+                proxy=None,
+                mode="skip",
+                success=False,
+                latency_ms=0,
+                error="skipped_binary_url_extension",
+            )
+            return None
+
+        should_skip, skip_reason = await self._preflight_article_url(article_url)
+        if should_skip:
+            logger.info(
+                "Skipping URL by header preflight %s: %s", skip_reason, article_url
+            )
+            await self.db.record_extraction_attempt(
+                source_url=source_url,
+                article_url=article_url,
+                host=host,
+                proxy=None,
+                mode="skip",
+                success=False,
+                latency_ms=0,
+                error=skip_reason or "skipped_preflight",
+            )
+            return None
+
         options = ExtractionOptions(
             min_word_count=80,
             min_char_threshold=500,
@@ -119,7 +270,6 @@ class RSSWrapperService:
                 network = NetworkOptions(proxy=proxy, randomize_user_agent=True)
                 started = perf_counter()
                 mode = "playwright" if use_playwright else "http"
-                host = urlparse(article_url).netloc.lower() or "unknown-host"
                 try:
                     result = await extract_article_from_url(
                         article_url,
@@ -148,6 +298,28 @@ class RSSWrapperService:
                     continue
 
                 if result.success and result.content.strip():
+                    within_limits, chars = self._is_within_size_limits(result.content)
+                    if not within_limits:
+                        logger.info(
+                            "Dropping oversized extraction for %s (chars=%s)",
+                            article_url,
+                            chars,
+                        )
+                        await self.db.record_extraction_attempt(
+                            source_url=source_url,
+                            article_url=article_url,
+                            host=host,
+                            proxy=proxy,
+                            mode=mode,
+                            success=False,
+                            latency_ms=int((perf_counter() - started) * 1000),
+                            error=(
+                                f"content_too_large(chars={chars},"
+                                f"max_chars={self.settings.max_inner_text_chars})"
+                            ),
+                        )
+                        continue
+
                     await self.db.record_extraction_attempt(
                         source_url=source_url,
                         article_url=article_url,
@@ -219,8 +391,24 @@ class RSSWrapperService:
             wrapped_items: list[WrappedFeedItem] = []
             uncached_entries = []
             for entry in entries:
+                if self._is_binary_url(entry.article_url):
+                    logger.info(
+                        "Skipping binary entry URL from feed: %s", entry.article_url
+                    )
+                    continue
+
                 cached = await self.db.get_cached_item(feed_id, entry.article_url)
                 if cached is not None:
+                    within_limits, chars = self._is_within_size_limits(
+                        cached.content_html
+                    )
+                    if not within_limits:
+                        logger.info(
+                            "Dropping oversized cached item for %s (chars=%s)",
+                            entry.article_url,
+                            chars,
+                        )
+                        continue
                     if entry.pub_date and not cached.pub_date:
                         cached.pub_date = entry.pub_date
                     wrapped_items.append(cached)
@@ -232,6 +420,16 @@ class RSSWrapperService:
             )
             for entry, extracted in extracted_results:
                 if extracted is None:
+                    continue
+                within_limits, chars = self._is_within_size_limits(
+                    extracted.content_html
+                )
+                if not within_limits:
+                    logger.info(
+                        "Dropping oversized extracted item for %s (chars=%s)",
+                        entry.article_url,
+                        chars,
+                    )
                     continue
                 if entry.pub_date:
                     extracted.pub_date = entry.pub_date

@@ -23,6 +23,9 @@ Output: a new RSS feed where each item includes:
 
 - Generic source feed support (`link`-based and HNRSS `Article URL` pattern)
 - `article-extractor` integration (no fork, no changes needed)
+- URL safety checks before extraction:
+  - extension-based binary skip
+  - response-header preflight skip (`content-type` + `content-length`)
 - SQLite cache with per-source retention cap (`max 100` by default)
 - Adaptive high parallelism:
   - global semaphore
@@ -97,7 +100,9 @@ All config is env-based with prefix `RSS_WRAPPER_`.
 | `MAX_PARALLELISM` | `32` | Global extraction concurrency |
 | `PER_HOST_INITIAL_PARALLELISM` | `2` | Initial per-host concurrency |
 | `PER_HOST_MIN_PARALLELISM` | `1` | Minimum per-host concurrency |
-| `PER_HOST_MAX_PARALLELISM` | `8` | Maximum per-host concurrency |
+| `PER_HOST_MAX_PARALLELISM` | `4` | Maximum per-host concurrency |
+| `MAX_INNER_TEXT_CHARS` | `15000` | Drop entry if extracted inner text exceeds this char count |
+| `MAX_ARTICLE_CONTENT_MB` | `8` | Preflight-skip URL when `content-length` exceeds this size |
 | `LOG_DIR` | `./data/logs` | Persistent log directory |
 | `LOG_RETENTION_DAYS` | `366` | Daily rotated log retention |
 | `LOG_LEVEL` | `INFO` | Application log level |
