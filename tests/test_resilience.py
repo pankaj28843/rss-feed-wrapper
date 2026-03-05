@@ -103,7 +103,7 @@ async def test_drops_oversized_inner_text_content(tmp_path, monkeypatch) -> None
         db=db,
         settings=Settings(
             db_path=str(tmp_path / "oversized.db"),
-            max_inner_text_chars=100,
+            max_article_inner_text_chars=100,
         ),
     )
 
@@ -126,6 +126,43 @@ async def test_drops_oversized_inner_text_content(tmp_path, monkeypatch) -> None
         "https://example.com/too-big", None, "https://hnrss.org/newest"
     )
     assert item is None
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_skips_oversized_raw_body_inner_text(tmp_path, monkeypatch) -> None:
+    db = CacheDB(str(tmp_path / "oversized_raw.db"))
+    await db.connect()
+    service = RSSWrapperService(
+        db=db,
+        settings=Settings(
+            db_path=str(tmp_path / "oversized_raw.db"),
+            max_raw_inner_text_chars=200000,
+            max_article_inner_text_chars=15000,
+        ),
+    )
+
+    called = False
+
+    async def fake_extract(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("extractor should not run for oversized raw body text")
+
+    monkeypatch.setattr(
+        "rss_feed_wrapper.service.extract_article_from_url", fake_extract
+    )
+
+    async def skip_preflight(_url: str):
+        return True, "skipped_raw_inner_text_chars:250000>200000"
+
+    monkeypatch.setattr(service, "_preflight_article_url", skip_preflight)
+
+    item = await service._extract_article(
+        "https://example.com/too-big-raw", None, "https://hnrss.org/newest"
+    )
+    assert item is None
+    assert called is False
     await db.close()
 
 

@@ -44,7 +44,7 @@ wheels = [
 
 [[package]]
 name = "article-extractor"
-version = "0.5.5"
+version = "0.5.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "defusedxml" },
@@ -52,9 +52,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/4f/28532c6dc8aa5a2ccc8694018f46167c1f57435bee6e1246724557ddb1a7/article_extractor-0.5.5.tar.gz", hash = "sha256:0ea2fa81419b2dcdf1f31fe0700709cdd94214846c2b8b76b1af31652f5e49ab", size = 248819, upload-time = "2026-01-20T10:35:23.845Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/31/3c67a5d7af7515f183b6432f06fc26eaf1bedf1ee0459095ca5d6cd0e690/article_extractor-0.5.6.tar.gz", hash = "sha256:61189a16fabdf37b70eb78996e5996454895ec7f2deeba6d3c49e6672d379e1a", size = 1996542, upload-time = "2026-03-05T06:00:25.64Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/44/d7c47ab259df81c4db5f8934131661f054b166e74745afde9e2c4e3f89c4/article_extractor-0.5.5-py3-none-any.whl", hash = "sha256:ff0068f91e85a968e004d7e65e0383f7549759eefe0ff4e21504eb063f1ecb12", size = 81031, upload-time = "2026-01-20T10:35:21.938Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/b0/cd3ff75866dc4773d3d5a734e9b32cff33c441c339a02b12d804c6747b9c/article_extractor-0.5.6-py3-none-any.whl", hash = "sha256:b9266d707ffe07184153011a75f074706d2ba2b071d1c30856012553a7e3b765", size = 84507, upload-time = "2026-03-05T06:00:24.363Z" },
 ]
 
 [[package]]

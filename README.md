@@ -101,7 +101,8 @@ All config is env-based with prefix `RSS_WRAPPER_`.
 | `PER_HOST_INITIAL_PARALLELISM` | `2` | Initial per-host concurrency |
 | `PER_HOST_MIN_PARALLELISM` | `1` | Minimum per-host concurrency |
 | `PER_HOST_MAX_PARALLELISM` | `4` | Maximum per-host concurrency |
-| `MAX_INNER_TEXT_CHARS` | `15000` | Drop entry if extracted inner text exceeds this char count |
+| `MAX_RAW_INNER_TEXT_CHARS` | `200000` | Preflight-skip URL when original `document.body` inner-text exceeds this count |
+| `MAX_ARTICLE_INNER_TEXT_CHARS` | `15000` | Drop entry when extracted article inner-text exceeds this count |
 | `MAX_ARTICLE_CONTENT_MB` | `8` | Preflight-skip URL when `content-length` exceeds this size |
 | `LOG_DIR` | `./data/logs` | Persistent log directory |
 | `LOG_RETENTION_DAYS` | `366` | Daily rotated log retention |

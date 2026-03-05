@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     per_host_initial_parallelism: int = 2
     per_host_min_parallelism: int = 1
     per_host_max_parallelism: int = 4
-    max_inner_text_chars: int = 15000
+    max_raw_inner_text_chars: int = 200000
+    max_article_inner_text_chars: int = 15000
     max_article_content_mb: int = 8
     log_dir: str = "./data/logs"
     log_retention_days: int = 366
